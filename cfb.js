@@ -250,9 +250,9 @@ function getNextProxy() {
 }
 
 function normalizeTargetUrl(url) {
-    // Add http:// if no protocol is specified
+    // Add https:// if no protocol is specified (forces HTTPS)
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'http://' + url;
+        url = 'https://' + url; // Default to HTTPS
     }
     
     // Parse the URL to ensure it's valid
@@ -262,7 +262,12 @@ function normalizeTargetUrl(url) {
         process.exit(1);
     }
     
-    // Remove any path from the base URL
+    // Force port 443 (HTTPS) if not already specified
+    if (!parsed.port) {
+        return `https://${parsed.hostname}:443`; // Explicitly add :443
+    }
+    
+    // If port was already in URL, keep it as-is
     return `${parsed.protocol}//${parsed.hostname}`;
 }
 
