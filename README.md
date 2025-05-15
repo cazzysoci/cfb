@@ -5,7 +5,7 @@
 
  cd cfb
 
- node cfb.js https://example.com/ 120
+node cfb.js https://example.com 120 proxy
 ```
 
 #Install this module
