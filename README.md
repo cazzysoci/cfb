@@ -5,6 +5,8 @@
 
  cd cfb
 
+ulimit -n 999999
+
 node cfb.js https://example.com 120 proxy
 ```
 
