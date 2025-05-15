@@ -8,6 +8,8 @@
  node cfb.js https://example.com/ 120
 ```
 
+#Install this module
+
 ```bash
 npm install cloudscraper request randomstring socks-proxy-agent
 ```
