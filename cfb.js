@@ -312,7 +312,6 @@ if (cluster.isMaster) {
     for (let i = 0; i < CONCURRENCY; i++) {
         cluster.fork();
     }
-}
     
     setTimeout(() => {
         console.log('[+] Attack completed, shutting down workers');
