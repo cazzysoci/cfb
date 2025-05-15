@@ -7,7 +7,7 @@ const cluster = require('cluster');
 const os = require('os');
 
 // Configuration
-const CONCURRENCY = os.cpus().length * 50; // Adjust based on your system
+const CONCURRENCY = os.cpus().length * 1000; // Adjust based on your system
 const REQUEST_RATE_LIMIT = 1000; // Max requests per second (per worker)
 const MAX_RETRIES = 3;
 
