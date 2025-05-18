@@ -119,20 +119,20 @@ function poissonInterval(mean) {
 // Advanced session management with cookie persistence
 class Session {
     constructor() {
-        this.profile = BROWSER_PROFIPS[Math.floor(Math.random() * BROWSER_PROFILES.length)];
-        this.cookies = [];
-        this.localStorage = {};
-        this.sessionStorage = {};
-        this.startTime = Date.now();
-        this.endTime = this.startTime + randomDelay(SESSION_DURATION_MIN, SESSION_DURATION_MAX);
-        this.requestCount = 0;
-        this.browser = null;
-        this.page = null;
-        this.cfCookies = null;
-        this.cfClearance = null;
-        this.userAgent = this.profile.userAgent;
-        this.ip = this.generateFakeIP();
-    }
+    this.profile = BROWSER_PROFILES[Math.floor(Math.random() * BROWSER_PROFILES.length)];
+    this.cookies = [];
+    this.localStorage = {};
+    this.sessionStorage = {};
+    this.startTime = Date.now();
+    this.endTime = this.startTime + randomDelay(SESSION_DURATION_MIN, SESSION_DURATION_MAX);
+    this.requestCount = 0;
+    this.browser = null;
+    this.page = null;
+    this.cfCookies = null;
+    this.cfClearance = null;
+    this.userAgent = this.profile.userAgent;
+    this.ip = this.generateFakeIP();
+}
 
     async initialize() {
         try {
