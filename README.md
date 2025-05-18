@@ -13,5 +13,5 @@ node cfb.js https://example.com 120 proxy
 #Install this module
 
 ```bash
-npm install cloudscraper request randomstring socks-proxy-agent
+npm install cloudscraper puppeteer-extra puppeteer-extra-plugin-stealth randomstring socks-proxy-agent
 ```
